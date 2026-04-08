@@ -23,7 +23,7 @@ class TypeformClient:
 
         Args:
             form_id: The Typeform form ID.
-            include_partial: If True, include partial (incomplete) responses.
+            include_partial: If True, include partial (incomplete) and started responses.
             page_size: Items per request (max 1000).
 
         Returns:
@@ -31,11 +31,15 @@ class TypeformClient:
         """
         url = f"{TYPEFORM_API_BASE}/forms/{form_id}/responses"
         params = {"page_size": min(page_size, 1000)}
-        if not include_partial:
-            params["completed"] = "true"
+
+        # Use response_type instead of deprecated 'completed' param
+        if include_partial:
+            params["response_type"] = "started,partial,completed"
+        else:
+            params["response_type"] = "completed"
 
         all_responses = []
-        page_num = 0
+        expected_total = None
 
         pbar = tqdm(desc=f"Typeform {form_id}", unit="resp")
 
@@ -43,6 +47,11 @@ class TypeformClient:
             resp = self._session.get(url, params=params, timeout=60)
             resp.raise_for_status()
             data = resp.json()
+
+            # Capture total_items from first page for validation
+            if expected_total is None:
+                expected_total = data.get("total_items", 0)
+                pbar.total = expected_total
 
             items = data.get("items", [])
             all_responses.extend(items)
@@ -57,9 +66,12 @@ class TypeformClient:
             if not last_token:
                 break
             params["before"] = last_token
-            page_num += 1
 
         pbar.close()
+
+        if expected_total and len(all_responses) != expected_total:
+            print(f"  Warning: API reports {expected_total} total responses but we fetched {len(all_responses)}")
+
         return all_responses
 
     def get_all_responses(self, form_ids, include_partial=True):
